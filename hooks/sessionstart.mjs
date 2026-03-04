@@ -57,7 +57,7 @@ try {
       if (base && !base.includes("*")) fileNames.add(base);
     }
 
-    let block = `\n<session_knowledge source="${isCompact ? "compact" : "previous_session"}" events="${events.length}">`;
+    let block = `\n<session_knowledge source="${isCompact ? "compact" : "continue"}" events="${events.length}">`;
 
     // ── Behavioral directives ──
     block += `\n  <behavioral_directives>`;
@@ -78,7 +78,8 @@ try {
       block += `\n      mcp__plugin_context-mode_context-mode__index(source: "session-resume", content: <session_events content>)`;
       block += `\n    Then continue the user's last request.`;
     } else {
-      block += `\n    Knowledge from a previous session on this project, preserved by context-mode.`;
+      // source === "resume" (--continue)
+      block += `\n    Previous session knowledge loaded via --continue, preserved by context-mode.`;
       block += `\n    Use as context. Verify file state before editing.`;
       block += `\n    RECOMMENDED: Index the <session_events> block into context-mode for searchable access:`;
       block += `\n      mcp__plugin_context-mode_context-mode__index(source: "previous-session", content: <session_events content>)`;
@@ -131,7 +132,7 @@ try {
         block += `\n    *Context was compacted — all session knowledge restored. Continuing seamlessly.*`;
       } else {
         block += `\n    `;
-        block += `\n    *Previous session knowledge loaded. Use \`--continue\` to keep full history — without it, old session data is cleared.*`;
+        block += `\n    *Previous session loaded via --continue. Session knowledge preserved by context-mode.*`;
       }
       block += `\n    ---`;
     }
@@ -305,8 +306,8 @@ try {
     }
 
     db.close();
-  } else if (source === "startup") {
-    // Fresh session — inject previous session knowledge + cleanup
+  } else if (source === "resume") {
+    // User used --continue — inject previous session knowledge
     const { SessionDB } = await import(join(PKG_SESSION, "db.js"));
     const { buildResumeSnapshot } = await import(join(PKG_SESSION, "snapshot.js"));
     const dbPath = getSessionDBPath();
@@ -325,21 +326,26 @@ try {
       const events = db.getEvents(prevId);
 
       if (events.length > 0) {
-        // Try existing resume snapshot, else build fresh
         const resume = db.getResume(prevId);
         const snapshot = resume?.snapshot || buildResumeSnapshot(events, {
           compactCount: recentSession.compact_count ?? 0,
         });
         const stats = db.getSessionStats(prevId);
 
-        additionalContext += buildSessionKnowledge("startup", events, snapshot, stats);
+        additionalContext += buildSessionKnowledge("resume", events, snapshot, stats);
       }
     }
 
+    db.close();
+  } else if (source === "startup") {
+    // Fresh session (no --continue) — clean slate, no injection.
+    const { SessionDB } = await import(join(PKG_SESSION, "db.js"));
+    const dbPath = getSessionDBPath();
+    const db = new SessionDB({ dbPath });
     db.cleanupOldSessions();
     db.close();
   }
-  // "resume" and "clear" — no action needed
+  // "clear" — no action needed
 } catch {
   // Session continuity is best-effort — never block session start
 }
