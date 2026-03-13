@@ -311,7 +311,39 @@ export default {
       },
     );
 
-    // ── 5. before_prompt_build — Routing instruction injection ──
+    // ── 5. before_compaction — Flush events to snapshot before compaction ─
+
+    api.on(
+      "before_compaction",
+      async () => {
+        try {
+          const events = db.getEvents(sessionId);
+          if (events.length === 0) return;
+          const freshStats = db.getSessionStats(sessionId);
+          const snapshot = buildResumeSnapshot(events, {
+            compactCount: (freshStats?.compact_count ?? 0) + 1,
+          });
+          db.upsertResume(sessionId, snapshot, events.length);
+        } catch {
+          // best effort — never break compaction
+        }
+      },
+    );
+
+    // ── 6. after_compaction — Increment compact count ─────
+
+    api.on(
+      "after_compaction",
+      async () => {
+        try {
+          db.incrementCompactCount(sessionId);
+        } catch {
+          // best effort
+        }
+      },
+    );
+
+    // ── 7. before_prompt_build — Routing instruction injection ──
 
     if (routingInstructions) {
       api.on(
@@ -323,7 +355,7 @@ export default {
       );
     }
 
-    // ── 6. Context engine — Compaction management ──────────
+    // ── 8. Context engine — Compaction management ──────────
 
     api.registerContextEngine("context-mode", () => ({
       info: {
@@ -360,7 +392,7 @@ export default {
       },
     }));
 
-    // ── 7. Auto-reply commands — ctx slash commands ───────
+    // ── 9. Auto-reply commands — ctx slash commands ───────
 
     if (api.registerCommand) {
       api.registerCommand({

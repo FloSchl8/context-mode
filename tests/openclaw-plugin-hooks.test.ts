@@ -112,3 +112,59 @@ describe("session_start hook", () => {
     assert.equal(result2, undefined, "after session_start reset, still no resume → undefined");
   });
 });
+
+describe("compaction hooks", () => {
+  beforeEach(() => { vi.resetModules(); });
+
+  test("before_compaction hook is registered", async () => {
+    const { default: plugin } = await import("../src/openclaw-plugin.js");
+    const { api, typedHooks } = createMockApi();
+
+    plugin.register(api as unknown as Parameters<typeof plugin.register>[0]);
+
+    const hook = typedHooks.find(h => h.hookName === "before_compaction");
+    assert.ok(hook, "before_compaction must be registered");
+  });
+
+  test("after_compaction hook is registered", async () => {
+    const { default: plugin } = await import("../src/openclaw-plugin.js");
+    const { api, typedHooks } = createMockApi();
+
+    plugin.register(api as unknown as Parameters<typeof plugin.register>[0]);
+
+    const hook = typedHooks.find(h => h.hookName === "after_compaction");
+    assert.ok(hook, "after_compaction must be registered");
+  });
+
+  test("before_compaction DB logic: flushes events to resume snapshot", async () => {
+    // Test the DB-layer logic directly (independent of plugin closures)
+    const { buildResumeSnapshot } = await import("../src/session/snapshot.js");
+    const db = createTestDB();
+    const sid = randomUUID();
+    const projectDir = join(tmpdir(), `proj-${randomUUID()}`);
+    db.ensureSession(sid, projectDir);
+
+    // Insert a fake event
+    db.insertEvent(sid, {
+      type: "file",
+      category: "file",
+      data: "/src/test.ts",
+      priority: 2,
+      data_hash: "",
+    } as unknown as import("../src/types.js").SessionEvent, "PostToolUse");
+
+    // Simulate before_compaction logic
+    const events = db.getEvents(sid);
+    assert.equal(events.length, 1);
+
+    const stats = db.getSessionStats(sid);
+    const snapshot = buildResumeSnapshot(events, {
+      compactCount: (stats?.compact_count ?? 0) + 1,
+    });
+    db.upsertResume(sid, snapshot, events.length);
+
+    const resume = db.getResume(sid);
+    assert.ok(resume, "resume must exist after flush");
+    assert.ok(resume.snapshot.length > 0, "snapshot must be non-empty");
+  });
+});
