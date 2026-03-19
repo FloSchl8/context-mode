@@ -100,47 +100,11 @@ function getStorePath(): string {
   return join(dir, `${hash}.db`);
 }
 
-/**
- * Detect fresh vs --continue session.
- * SessionStart hook writes {hash}.cleanup on "startup", deletes it on "resume".
- * Flag exists → fresh start → delete old store. Flag missing → continue → keep store.
- * Uses same hash as getStorePath() so they stay in sync.
- */
-function isFreshStart(): boolean {
-  try {
-    const projectDir = process.env.CLAUDE_PROJECT_DIR
-      || process.env.GEMINI_PROJECT_DIR
-      || process.env.OPENCLAW_PROJECT_DIR
-      || process.cwd();
-    const normalized = projectDir.replace(/\\/g, "/");
-    const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 16);
-    // Check all platform config dirs for cleanup flag
-    const configDirs = [".claude", ".gemini", ".cursor", ".kiro", ".config/opencode", ".openclaw"];
-    for (const configDir of configDirs) {
-      const sessionsDir = join(homedir(), configDir, "context-mode", "sessions");
-      // Check with and without worktree suffix
-      const files = existsSync(sessionsDir) ? readdirSync(sessionsDir) : [];
-      if (files.some(f => f.startsWith(hash) && f.endsWith(".cleanup"))) {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false; // default: persist (safer than deleting)
-  }
-}
-
 function getStore(): ContentStore {
   if (!_store) {
+    // Content DB cleanup on fresh start is handled by SessionStart hook.
+    // Server just opens whatever DB exists (or creates new if hook deleted it).
     const dbPath = getStorePath();
-
-    // Fresh session: delete old store DB for clean slate
-    if (isFreshStart()) {
-      for (const suffix of ["", "-wal", "-shm"]) {
-        try { unlinkSync(dbPath + suffix); } catch { /* may not exist */ }
-      }
-    }
-
     _store = new ContentStore(dbPath);
 
     // One-time startup cleanup: remove stale content DBs (>14 days)
