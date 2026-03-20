@@ -485,6 +485,41 @@ describe("bun:sqlite adapter (#45)", () => {
   });
 });
 
+// ── Cross-OS compatibility ────────────────────────────────────────────
+
+describe("Cross-OS compatibility", () => {
+  const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf-8"));
+  const src = readFileSync(resolve(ROOT, "src", "cli.ts"), "utf-8");
+
+  it("build script does not shell out to POSIX chmod command", () => {
+    // Shell `chmod +x` is not available on Windows cmd.exe
+    // Node.js fs.chmodSync is cross-platform and acceptable
+    expect(pkg.scripts.build).not.toMatch(/\bchmod\s+\+x\b/);
+  });
+
+  it("postinstall script uses node -e for cross-platform compatibility", () => {
+    // POSIX [ -n ... ] && printf || true fails on Windows cmd.exe
+    expect(pkg.scripts.postinstall).not.toMatch(/\[ -n/);
+    expect(pkg.scripts.postinstall).not.toContain("printf");
+    expect(pkg.scripts.postinstall).toMatch(/^node -e/);
+  });
+
+  it("install:openclaw gracefully handles missing bash on Windows", () => {
+    // Direct 'bash' invocation fails on Windows without Git Bash
+    expect(pkg.scripts["install:openclaw"]).not.toMatch(/^bash /);
+  });
+
+  it("cli.ts chmod in setup/upgrade is guarded by platform check", () => {
+    // execSync('chmod +x ...') must only run on non-Windows
+    // Find the chmod +x line and check for win32 guard nearby
+    const chmodIdx = src.indexOf('chmod +x');
+    expect(chmodIdx).toBeGreaterThan(-1);
+    // Must have a platform guard before the chmod call
+    const contextBefore = src.slice(Math.max(0, chmodIdx - 300), chmodIdx);
+    expect(contextBefore).toMatch(/process\.platform\s*!==\s*["']win32["']/);
+  });
+});
+
 // ── Package exports ───────────────────────────────────────────────────
 
 describe("Package exports", () => {
